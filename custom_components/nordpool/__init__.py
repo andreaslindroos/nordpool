@@ -4,7 +4,7 @@ from datetime import timedelta
 
 
 import backoff
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -219,9 +219,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        # This is an issue if you have multiple sensors as everything related to DOMAIN
-        # is removed, regardless if you have multiple sensors or not. Doesn't seem to
-        # create a big issue for now #TODO
+        # The NordpoolData in hass.data[DOMAIN] (prices + new day/hour/tomorrow
+        # timers) is shared by every entry. Only tear it down when no other
+        # entry is still loaded - otherwise the remaining entries' sensors keep
+        # a reference to a dead instance whose data never rolls over at
+        # midnight, while a reloaded entry creates a new one.
+        others_loaded = any(
+            e.entry_id != entry.entry_id and e.state is ConfigEntryState.LOADED
+            for e in hass.config_entries.async_entries(DOMAIN)
+        )
+        if others_loaded:
+            return True
         if DOMAIN in hass.data:
             for unsub in hass.data[DOMAIN].listeners:
                 unsub()
